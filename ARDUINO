@@ -1,0 +1,54 @@
+#include "DHT.h"
+
+#define DHTTYPE DHT11 
+int portaDHT = 7;
+int red = 2;
+int blu = 4;
+int green = 3;
+int rele1 = 8;
+DHT dht(portaDHT, DHTTYPE);
+
+void setup() {
+    Serial.begin(9600);
+    pinMode(red, OUTPUT);
+    pinMode(blu, OUTPUT);
+    pinMode(green, OUTPUT);
+    pinMode(rele1, OUTPUT);
+    dht.begin();
+}
+
+void loop() {
+    float h = dht.readHumidity();
+    float t = dht.readTemperature();
+    
+    // Invio dati nel formato corretto per Python
+    Serial.print("Umidità: ");
+    Serial.print(h);
+    Serial.print("% Temperatura: ");
+    Serial.print(t);
+    Serial.println("°C");
+
+    // Controllo LED in base alla temperatura
+    if (t < 10) {
+        digitalWrite(red, LOW);
+        digitalWrite(blu, HIGH);
+        digitalWrite(green, LOW);
+    } else if (t >= 10 && t < 30) {
+        digitalWrite(red, LOW);
+        digitalWrite(blu, LOW);
+        digitalWrite(green, HIGH);
+    } else {
+        digitalWrite(red, HIGH);
+        digitalWrite(blu, LOW);
+        digitalWrite(green, LOW);
+    }
+
+    // Controllo relè
+    digitalWrite(rele1, LOW);
+    delay(1000);
+    digitalWrite(rele1, HIGH);
+    digitalWrite(red, LOW);
+    digitalWrite(blu, LOW);
+    digitalWrite(green, LOW);
+    delay(1000);
+}
