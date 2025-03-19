@@ -1,0 +1,95 @@
+import re
+import serial
+import time
+import threading
+import dearpygui.dearpygui as dpg
+
+# Setup della connessione seriale
+try:
+    ser = serial.Serial('COM6', 9600)
+except serial.SerialException as e:
+    print(f"Errore apertura porta seriale: {e}")
+    exit()
+
+# Buffer dati condivisi
+dati_temp = []
+dati_um = []
+
+# Lock per la sincronizzazione
+dati_lock = threading.Lock()
+grafici_lock = threading.Lock()
+
+# Funzione per leggere i dati seriali
+def leggi_seriale():
+    global ser
+    pattern = r"Umidità: (\d+\.\d+)% Temperatura: (\d+\.\d+)°C"
+
+    while True:
+        try:
+            dati_bytes = ser.readline()
+            dati_str = dati_bytes.decode('utf-8').strip()
+            print(f"Dati grezzi dalla seriale: {dati_str}")
+
+            match = re.search(pattern, dati_str)
+            if match:
+                umidita = float(match.group(1))
+                temp = float(match.group(2))
+
+                with dati_lock:
+                    dati_temp.append({'temperatura': temp, 'timestamp': time.time()})
+                    dati_um.append({'umidita': umidita, 'timestamp': time.time()})
+                    
+                    # Limitiamo il buffer a 100 valori
+                    if len(dati_temp) > 100:
+                        dati_temp.pop(0)
+                    if len(dati_um) > 100:
+                        dati_um.pop(0)
+
+                aggiorna_grafici()
+            else:
+                print(f"Formato dati non valido: {dati_str}")
+
+        except serial.SerialException as e:
+            print(f"Errore di lettura seriale: {e}")
+            break
+        except UnicodeDecodeError as e:
+            print(f"Errore di decodifica dati: {e}")
+
+        time.sleep(0.1)
+
+# Funzione per aggiornare i grafici
+def aggiorna_grafici():
+    with grafici_lock:
+        with dati_lock:
+            temp_x = [d['timestamp'] for d in dati_temp]
+            temp_y = [d['temperatura'] for d in dati_temp]
+            um_x = [d['timestamp'] for d in dati_um]
+            um_y = [d['umidita'] for d in dati_um]
+        
+        dpg.set_value("temperatura_series", [list(temp_x), list(temp_y)])
+        dpg.set_value("umidita_series", [list(um_x), list(um_y)])
+
+# Configurazione dell'interfaccia grafica con DearPyGui
+dpg.create_context()
+dpg.create_viewport(title='Termostato con ARDUINO', width=800, height=600)
+
+with dpg.window(label="Grafici", width=800, height=1000, autosize=False):
+    with dpg.plot(label="Temperatura", height=280, width=-1):
+        dpg.add_plot_axis(dpg.mvXAxis, label="Tempo", tag="time_axis_temp")
+        dpg.add_plot_axis(dpg.mvYAxis, label="Temperatura (°C)", tag="temperatura_axis")
+        dpg.add_line_series([], [], label="Temperatura", parent="temperatura_axis", tag="temperatura_series")
+    
+    with dpg.plot(label="Umidità", height=280, width=-1):
+        dpg.add_plot_axis(dpg.mvXAxis, label="Tempo", tag="time_axis_um")
+        dpg.add_plot_axis(dpg.mvYAxis, label="Umidità (%)", tag="umidita_axis")
+        dpg.add_line_series([], [], label="Umidità", parent="umidita_axis", tag="umidita_series")
+
+# Avvio del thread per la lettura seriale
+thread_seriale = threading.Thread(target=leggi_seriale, daemon=True)
+thread_seriale.start()
+
+# Avvio dell'interfaccia grafica
+dpg.setup_dearpygui()
+dpg.show_viewport()
+dpg.start_dearpygui()
+dpg.destroy_context()
