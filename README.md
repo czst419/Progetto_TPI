@@ -9,7 +9,10 @@
 Questo progetto consiste nella realizzazione di un **termometro con Arduino** in grado di monitorare temperatura e umidità, gestire un sistema di LED in base alle soglie di temperatura, e visualizzare i dati raccolti in **un'applicazione desktop** con grafici interattivi, sviluppata utilizzando **Dear PyGui**.
 
 ---
+## Link PRESENTAZIONE
+https://www.canva.com/design/DAGiQMe7qAM/-FHpO94gQZtwW77Eky3qPQ/edit?utm_content=DAGiQMe7qAM&utm_campaign=designshare&utm_medium=link2&utm_source=sharebutton
 
+---
 ## Obiettivo
 Creare un sistema di controllo della temperatura basato su Arduino che:
 1. **Misuri** temperatura e umidità in tempo reale.
