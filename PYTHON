@@ -1,95 +1,121 @@
-import re
-import serial
-import time
 import threading
+import serial
+import json
+import time
 import dearpygui.dearpygui as dpg
 
-# Setup della connessione seriale
-try:
-    ser = serial.Serial('COM6', 9600)
-except serial.SerialException as e:
-    print(f"Errore apertura porta seriale: {e}")
-    exit()
+# Configurazione della porta seriale
+SERIAL_PORT = "COM6"
+BAUD_RATE = 9600
+FILEDATI = 'dati.jsonl'
 
-# Buffer dati condivisi
-dati_temp = []
-dati_um = []
+# Soglie di temperatura e umidità
+TEMPMIN = 10
+TEMPMAX = 30
+UMIDITAMIN = 30
+UMIDITAMAX = 60
 
-# Lock per la sincronizzazione
-dati_lock = threading.Lock()
-grafici_lock = threading.Lock()
+data_temperatura = []
+data_umidita = []
+time_stamps = []
 
-# Funzione per leggere i dati seriali
-def leggi_seriale():
-    global ser
-    pattern = r"Umidità: (\d+\.\d+)% Temperatura: (\d+\.\d+)°C"
+def read_serial():
+    global data_temperatura, data_umidita, time_stamps
+    try:
+        ser = serial.Serial(SERIAL_PORT, BAUD_RATE, timeout=1)
+        while True:
+            try:
+                line = ser.readline().decode('utf-8').strip()
+                if line:
+                    print(f"Dati ricevuti: {line}")
+                    if "Umidità:" in line and "Temperatura:" in line:
+                        parts = line.replace("Umidità: ", "").replace("% Temperatura: ", ",").replace("°C", "").split(',')
+                        if len(parts) == 2:
+                            umidita = float(parts[0].strip())
+                            temperatura = float(parts[1].strip())
+                            timestamp = time.time()
+                            
+                            salva_dati({"temperatura": temperatura, "umidita": umidita, "time": timestamp})
+                            
+                            # Aggiorna le liste dati per il grafico
+                            data_temperatura.append(temperatura)
+                            data_umidita.append(umidita)
+                            time_stamps.append(timestamp)
 
-    while True:
-        try:
-            dati_bytes = ser.readline()
-            dati_str = dati_bytes.decode('utf-8').strip()
-            print(f"Dati grezzi dalla seriale: {dati_str}")
+                            # Mantieni solo gli ultimi 100 dati per non sovraccaricare il grafico
+                            if len(data_temperatura) > 100:
+                                data_temperatura.pop(0)
+                                data_umidita.pop(0)
+                                time_stamps.pop(0)
 
-            match = re.search(pattern, dati_str)
-            if match:
-                umidita = float(match.group(1))
-                temp = float(match.group(2))
+                            # Aggiorna la GUI
+                            dpg.set_value("plot_temperatura", [time_stamps, data_temperatura])
+                            dpg.set_value("plot_umidita", [time_stamps, data_umidita])
+                            dpg.set_value("latest_values", f"Temperatura: {temperatura:.1f} °C, Umidità: {umidita:.1f}%")
+                            aggiorna_indicatori(temperatura, umidita)
+            except ValueError:
+                continue
+    except serial.SerialException as e:
+        print(f"Errore con la porta seriale: {e}")
 
-                with dati_lock:
-                    dati_temp.append({'temperatura': temp, 'timestamp': time.time()})
-                    dati_um.append({'umidita': umidita, 'timestamp': time.time()})
-                    
-                    # Limitiamo il buffer a 100 valori
-                    if len(dati_temp) > 100:
-                        dati_temp.pop(0)
-                    if len(dati_um) > 100:
-                        dati_um.pop(0)
+def aggiorna_indicatori(temperatura_valore, umidita_valore):
+    if temperatura_valore < TEMPMIN:
+        dpg.configure_item(indicatore_temperatura, fill=(0, 0, 255, 255))  # Blu
+    elif temperatura_valore > TEMPMAX:
+        dpg.configure_item(indicatore_temperatura, fill=(255, 0, 0, 255))  # Rosso
+    else:
+        dpg.configure_item(indicatore_temperatura, fill=(0, 255, 0, 255))  # Verde
 
-                aggiorna_grafici()
-            else:
-                print(f"Formato dati non valido: {dati_str}")
+    if umidita_valore < UMIDITAMIN:
+        dpg.configure_item(indicatore_umidita, fill=(255, 255, 0, 255))  # Giallo
+    elif umidita_valore > UMIDITAMAX:
+        dpg.configure_item(indicatore_umidita, fill=(255, 0, 0, 255))  # Rosso
+    else:
+        dpg.configure_item(indicatore_umidita, fill=(0, 255, 0, 255))  # Verde
 
-        except serial.SerialException as e:
-            print(f"Errore di lettura seriale: {e}")
-            break
-        except UnicodeDecodeError as e:
-            print(f"Errore di decodifica dati: {e}")
+# Salva i valori in dati.jsonl
+def salva_dati(dati):
+    with open(FILEDATI, 'a', encoding='utf-8') as f:
+        json.dump(dati, f)
+        f.write('\n')
 
-        time.sleep(0.1)
+# Avvia il thread per la lettura della seriale
+thread = threading.Thread(target=read_serial, daemon=True)
+thread.start()
 
-# Funzione per aggiornare i grafici
-def aggiorna_grafici():
-    with grafici_lock:
-        with dati_lock:
-            temp_x = [d['timestamp'] for d in dati_temp]
-            temp_y = [d['temperatura'] for d in dati_temp]
-            um_x = [d['timestamp'] for d in dati_um]
-            um_y = [d['umidita'] for d in dati_um]
-        
-        dpg.set_value("temperatura_series", [list(temp_x), list(temp_y)])
-        dpg.set_value("umidita_series", [list(um_x), list(um_y)])
-
-# Configurazione dell'interfaccia grafica con DearPyGui
 dpg.create_context()
-dpg.create_viewport(title='Termostato con ARDUINO', width=800, height=600)
-
-with dpg.window(label="Grafici", width=800, height=1000, autosize=False):
-    with dpg.plot(label="Temperatura", height=280, width=-1):
-        dpg.add_plot_axis(dpg.mvXAxis, label="Tempo", tag="time_axis_temp")
-        dpg.add_plot_axis(dpg.mvYAxis, label="Temperatura (°C)", tag="temperatura_axis")
-        dpg.add_line_series([], [], label="Temperatura", parent="temperatura_axis", tag="temperatura_series")
-    
-    with dpg.plot(label="Umidità", height=280, width=-1):
-        dpg.add_plot_axis(dpg.mvXAxis, label="Tempo", tag="time_axis_um")
-        dpg.add_plot_axis(dpg.mvYAxis, label="Umidità (%)", tag="umidita_axis")
-        dpg.add_line_series([], [], label="Umidità", parent="umidita_axis", tag="umidita_series")
-
-# Avvio del thread per la lettura seriale
-thread_seriale = threading.Thread(target=leggi_seriale, daemon=True)
-thread_seriale.start()
-
-# Avvio dell'interfaccia grafica
+dpg.create_viewport(title='Monitor Arduino', width=1100, height=1000)
 dpg.setup_dearpygui()
+
+with dpg.window(label="Grafico Dati", width=1100, height=900):
+    dpg.add_text("Dati in tempo reale da Arduino")
+    dpg.add_text("In attesa di dati...", tag="latest_values")
+    with dpg.group(horizontal=True):
+        with dpg.plot(label="Temperatura", height=350, width=900):
+            dpg.add_plot_legend()
+            x_axis_temp = dpg.add_plot_axis(dpg.mvXAxis, label="Tempo")
+            y_axis_temp = dpg.add_plot_axis(dpg.mvYAxis, label="Temperatura")
+            dpg.set_axis_limits(y_axis_temp, 0, 50)
+            dpg.add_line_series([], [], label="Temperatura (°C)", parent=y_axis_temp, tag="plot_temperatura")
+
+        with dpg.group():
+            dpg.add_text("Temperatura:")
+            with dpg.drawlist(width=50, height=50):
+                indicatore_temperatura = dpg.draw_circle((25, 25), 20, fill=(255, 255, 0, 255))
+
+    with dpg.group(horizontal=True):
+        with dpg.plot(label="Umidità", height=350, width=900):
+            dpg.add_plot_legend()
+            x_axis_umidita = dpg.add_plot_axis(dpg.mvXAxis, label="Tempo")
+            y_axis_umidita = dpg.add_plot_axis(dpg.mvYAxis, label="Umidità")
+            dpg.set_axis_limits(y_axis_umidita, 0, 100)
+            dpg.add_line_series([], [], label="Umidità (%)", parent=y_axis_umidita, tag="plot_umidita")
+
+        with dpg.group():
+            dpg.add_text("Umidità:")
+            with dpg.drawlist(width=50, height=50):
+                indicatore_umidita = dpg.draw_circle((25, 25), 20, fill=(255, 255, 0, 255))
+
 dpg.show_viewport()
 dpg.start_dearpygui()
 dpg.destroy_context()
